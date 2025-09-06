@@ -9,29 +9,57 @@
 #include <spinlock.h>
 
 
-#define LOWER_BOUND 400ULL
-#define UPPER_BOUND 100000ULL
-#define BUCKETS 10
-#define RANGE (UPPER_BOUND - LOWER_BOUND)  // 99600
-/* Precompute MULTIPLIER = (9 << 32) / RANGE to map [LOWER_BOUND+1, UPPER_BOUND-1] uniformly
- * into indices 0..9. */
-#define MULTIPLIER 388003ULL  // Approximately
 
 spinlock_t lock;
 
-const size_t DT[10] = {
-    100000,         // index 0
-    50000,
-    25000,
-    10000,
-    5000,
-    1000,
-    750,
-    500,
-    250,
-    100
+
+
+#define LOWER_BOUND 1600ULL
+#define UPPER_BOUND 800000ULL
+#define BUCKETS 100
+#define RANGE (UPPER_BOUND - LOWER_BOUND)  // 799600
+/* Precompute MULTIPLIER = (99 << 32) / RANGE to map [LOWER_BOUND+1, UPPER_BOUND-1] uniformly
+ * into indices 0..99. */
+#define MULTIPLIER 522ULL  // (99 << 32) / 799600
+
+//Reversed order with 100 positions from high to low, all values halved and multiples of 2
+const size_t DT[100] = {
+    500, 4950, 4900, 4850, 4800, 4750, 4700, 4650, 4600, 4550,
+    4500, 4450, 4400, 4350, 4300, 4250, 4200, 4150, 4100, 4050,
+    4000, 3950, 3900, 3850, 3800, 3750, 3700, 3650, 3600, 3550,
+    3500, 3450, 3400, 3350, 3300, 3250, 3200, 3150, 3100, 3050,
+    3000, 2950, 2900, 2850, 2800, 2750, 2700, 2650, 2600, 2550,
+    2500, 2450, 2400, 2350, 2300, 2250, 2200, 2150, 2100, 2050,
+    2000, 1950, 1900, 1850, 1800, 1750, 1700, 1650, 1600, 1550,
+    1500, 1450, 1400, 1350, 1300, 1250, 1200, 1150, 1100, 1050,
+    1000, 950, 900, 850, 800, 750, 700, 650, 600, 550,
+    500, 450, 400, 350, 300, 250, 200, 150, 50, 0
 };
 
+
+// const size_t DT[200] = {
+//     // 200 values linearly spaced from 1000 to 0
+//     1000, 995, 990, 985, 980, 975, 970, 965, 960, 955,
+//     950, 945, 940, 935, 930, 925, 920, 915, 910, 905,
+//     900, 895, 890, 885, 880, 875, 870, 865, 860, 855,
+//     850, 845, 840, 835, 830, 825, 820, 815, 810, 805,
+//     800, 795, 790, 785, 780, 775, 770, 765, 760, 755,
+//     750, 745, 740, 735, 730, 725, 720, 715, 710, 705,
+//     700, 695, 690, 685, 680, 675, 670, 665, 660, 655,
+//     650, 645, 640, 635, 630, 625, 620, 615, 610, 605,
+//     600, 595, 590, 585, 580, 575, 570, 565, 560, 555,
+//     550, 545, 540, 535, 530, 525, 520, 515, 510, 505,
+//     500, 495, 490, 485, 480, 475, 470, 465, 460, 455,
+//     450, 445, 440, 435, 430, 425, 420, 415, 410, 405,
+//     400, 395, 390, 385, 380, 375, 370, 365, 360, 355,
+//     350, 345, 340, 335, 330, 325, 320, 315, 310, 305,
+//     300, 295, 290, 285, 280, 275, 270, 265, 260, 255,
+//     250, 245, 240, 235, 230, 225, 220, 215, 210, 205,
+//     200, 195, 190, 185, 180, 175, 170, 165, 160, 155,
+//     150, 145, 140, 135, 130, 125, 120, 115, 110, 105,
+//     100, 95, 90, 85, 80, 75, 70, 65, 60, 55,
+//     50, 45, 40, 35, 30, 25, 20, 15, 10,  0
+// };
 /* Define the global counters. */
 volatile size_t total_bus_access = 0;
 volatile size_t qm_bus_access = 0;  /* Added QM bus access counter */
@@ -102,8 +130,10 @@ static const uint32_t scaling[5] = { 64, 128, 192, 256 };
 void mem_throt_period_timer_callback_nc(irqid_t int_id) {
     timer_disable();
 
-    /* Modified to include QM VMs */
+    if(cpu()->vcpu->vm->mem_throt.c_vm != QM) {
+            /* Modified to include QM VMs */
         uint64_t new_val = events_get_cntr_value(cpu()->vcpu->vm->mem_throt.counter_id);
+        // console_printk(" %d\n", new_val);
         /* For QM use index 0, for others, use their numeric value as index */
         size_t idx = cpu()->vcpu->vm->mem_throt.c_vm;
         update_critical_counter(crit_counters[idx], new_val);
@@ -112,6 +142,8 @@ void mem_throt_period_timer_callback_nc(irqid_t int_id) {
         events_clear_cntr_ovs(cpu()->vcpu->vm->mem_throt.counter_id);
         events_arch_cntr_enable(cpu()->vcpu->vm->mem_throt.counter_id);
         events_cntr_set(cpu()->vcpu->vm->mem_throt.counter_id, 0);
+
+    }
    
 
     if (cpu()->vcpu->vm->mem_throt.c_vm != ASIL_D) {
@@ -129,9 +161,9 @@ void mem_throt_period_timer_callback_nc(irqid_t int_id) {
         uint64_t total_val = atomic_load64_acquire(&total_bus_access);
         size_t new_budget = process_event(total_val);
 
-
         uint32_t crit = cpu()->vcpu->vm->mem_throt.c_vm;
         new_budget = (new_budget * scaling[crit]) >> 8;  // Multiply then shift to divide by 256
+
 
 #ifdef DEBUG
         console_printk(" %d, %d\n", new_budget, total_val);
@@ -232,4 +264,5 @@ void mem_throt_init() {
         perf_monitor_setup_event_counters(cpu()->vcpu->vm->mem_throt.counter_id);
     }
     mem_throt_timer_init(mem_throt_period_timer_callback_nc);
+    console_printk("Memory Throttling Initialized\n");
 }

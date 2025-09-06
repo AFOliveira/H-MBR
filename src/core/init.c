@@ -27,6 +27,7 @@ void init(cpuid_t cpu_id, paddr_t load_addr)
     console_init();
 
     if (cpu_is_master()) {
+        console_printk("[START] Profilling Started\n\r");
         console_printk("Bao Hypervisor\n\r");
     }
 

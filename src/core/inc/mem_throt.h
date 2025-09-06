@@ -25,7 +25,7 @@ typedef struct mem_throt_info {
     size_t c_vm;
 } mem_throt_t;
 
-extern const size_t DT[10];
+extern const size_t DT[100];
 
 /* Global counters: the total bus accesses and four critical counters */
 extern volatile size_t total_bus_access;
@@ -60,20 +60,22 @@ static inline uint64_t atomic_load64_acquire(const volatile uint64_t *addr)
 {
     uint64_t val;
     __asm__ volatile (
-        "ldr %0, [%1]"  /* Regular load instead of ldar for better pipelining */
+        "ldar %0, [%1]"    /* Acquire load for proper ordering */
         : "=r" (val)
         : "r" (addr)
+        : "memory"
     );
     return val;
 }
 
-/* Relaxed version without release semantics */
+/* Proper atomic store with release semantics */
 static inline void atomic_store64_release(volatile uint64_t *addr, uint64_t val)
 {
     __asm__ volatile (
-        "str %0, [%1]"  /* Regular store instead of stlr for better pipelining */
+        "stlr %0, [%1]"    /* Release store ensures prior accesses complete first */
         :
         : "r" (val), "r" (addr)
+        : "memory"
     );
 }
 
